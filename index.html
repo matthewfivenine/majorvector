@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
 <title>VECTOR HAVOC 3D</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
@@ -48,12 +50,51 @@
   .olv{font-size:clamp(18px,3.5vw,30px);color:#0f0;font-weight:700;
     text-shadow:0 0 15px #0f0;margin-bottom:8px;letter-spacing:4px;}
   .oln{font-size:clamp(10px,1.8vw,15px);color:#0af;margin-bottom:20px;letter-spacing:3px;}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.65}}
-  @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+  /* Mobile touch UI */
+  #joybase{position:fixed;width:120px;height:120px;border-radius:50%;
+    border:2px solid rgba(0,255,255,0.4);background:rgba(0,255,255,0.06);
+    bottom:100px;left:30px;pointer-events:none;z-index:30;
+    opacity:0.3;display:none;transition:opacity .2s;}
+  #joynub{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:44px;height:44px;border-radius:50%;
+    background:rgba(0,255,255,0.25);border:2px solid rgba(0,255,255,0.7);
+    box-shadow:0 0 12px #0ff;pointer-events:none;}
+  #firebtn{position:fixed;bottom:80px;right:30px;width:90px;height:90px;
+    border-radius:50%;border:2px solid rgba(0,255,255,0.6);
+    background:rgba(0,255,255,0.12);display:none;z-index:30;
+    font-family:'Orbitron',monospace;font-size:11px;font-weight:700;
+    color:#0ff;text-align:center;line-height:90px;letter-spacing:1px;
+    box-shadow:0 0 16px rgba(0,255,255,0.3);-webkit-tap-highlight-color:transparent;}
+  #missbtn{position:fixed;bottom:195px;right:30px;width:68px;height:68px;
+    border-radius:50%;border:2px solid rgba(255,136,0,0.6);
+    background:rgba(255,136,0,0.12);display:none;z-index:30;
+    font-family:'Orbitron',monospace;font-size:9px;font-weight:700;
+    color:#f80;text-align:center;line-height:68px;letter-spacing:1px;
+    box-shadow:0 0 12px rgba(255,136,0,0.3);-webkit-tap-highlight-color:transparent;}
+  #mobilehint{position:fixed;bottom:0;left:0;right:0;text-align:center;
+    font-family:'Orbitron',monospace;font-size:9px;color:rgba(0,255,255,0.35);
+    letter-spacing:2px;padding:6px;pointer-events:none;z-index:10;display:none;}
+  @media (max-width:768px){
+    .hl{font-size:8px;letter-spacing:2px;}
+    .hv{font-size:13px;}
+    #hud{padding:10px 12px;}
+    #shields{width:160px;}
+    #bossbar{width:240px;}
+    #waveWrap{width:100px;}
+    #bombs{font-size:9px;}
+    #joybase,#firebtn,#missbtn,#mobilehint{display:block;}
+    #xhair{display:none;}
+  }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+
+<!-- Mobile touch controls -->
+<div id="joybase"><div id="joynub"></div></div>
+<div id="firebtn">FIRE</div>
+<div id="missbtn">BOMB</div>
+<div id="mobilehint">SWIPE LEFT: MOVE · TAP RIGHT: FIRE · TAP TOP-RIGHT: MISSILE</div>
 
 <div id="hud">
   <div class="hb"><div class="hl">SCORE</div><div class="hv" id="sv">000000</div></div>
@@ -89,12 +130,12 @@
 <div id="bombs">MISSILES: 3</div>
 <div id="bwarn">⚠ BOSS INCOMING ⚠</div>
 
-<div id="ov">
+<div id="ov" style="touch-action:manipulation;cursor:pointer;">
   <h1>VECTOR HAVOC 3D</h1>
   <div class="os">★ DEEP SPACE ASSAULT ★</div>
   <div class="oc">
-    WASD / ARROWS: DODGE &nbsp;|&nbsp; SPACE / CLICK: FIRE<br>
-    X / SHIFT: MISSILE &nbsp;|&nbsp; MOUSE MOVES SHIP
+    WASD / ARROWS: DODGE &nbsp;|&nbsp; SPACE / CLICK: FIRE &nbsp;|&nbsp; X: MISSILE<br>
+    📱 SWIPE LEFT: MOVE · TAP RIGHT: FIRE · TAP TOP-RIGHT: MISSILE
   </div>
   <div class="op">PRESS SPACE TO LAUNCH</div>
 </div>
@@ -630,10 +671,16 @@ function updatePlayer(){
   if(keys['ArrowRight']||keys['d']||keys['D'])ax=1;
   if(keys['ArrowUp']||keys['w']||keys['W'])ay=1;
   if(keys['ArrowDown']||keys['s']||keys['S'])ay=-1;
-  // Mouse drift
-  const mox=(mx/innerWidth-.5)*2;
-  const moy=-(my/innerHeight-.5)*2;
-  ax+=mox*.28;ay+=moy*.22;
+  // Joystick input (mobile)
+  if(joy.active){ax+=joy.dx;ay-=joy.dy;}
+  // Clamp combined
+  ax=Math.max(-1,Math.min(1,ax));ay=Math.max(-1,Math.min(1,ay));
+  // Mouse drift (desktop only — skip if touch active)
+  if(!joy.active){
+    const mox=(mx/innerWidth-.5)*2;
+    const moy=-(my/innerHeight-.5)*2;
+    ax+=mox*.28;ay+=moy*.22;
+  }
 
   ptx=clamp(ptx+ax*.14,-PX,PX);
   pty=clamp(pty+ay*.12,-PY,PY);
@@ -918,6 +965,13 @@ window.addEventListener('keydown',e=>{
 window.addEventListener('keyup',e=>keys[e.key]=false);
 window.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;});
 window.addEventListener('mousedown',e=>{
+  // Overlay click-through
+  const ov=document.getElementById('ov');
+  if(ov.style.display!=='none'&&ov.contains(e.target)){
+    if(gstate==='title'){startGame();hideOv();gstate='levelstart';return;}
+    else if(gstate==='levelstart'){hideOv();gstate='playing';return;}
+    else if(gstate==='gameover'||gstate==='win'){startGame();hideOv();gstate='levelstart';return;}
+  }
   mdown=true;
   if(gstate==='title'){startGame();hideOv();gstate='levelstart';}
   else if(gstate==='levelstart'){hideOv();gstate='playing';}
@@ -927,29 +981,106 @@ window.addEventListener('mouseup',()=>mdown=false);
 
 function tryFire(){if(fireCd<=0){fireBullet();fireCd=Math.max(5,12-level);}}
 
-// Touch
-let tSX=0,tSY=0,lastTap=0;
-window.addEventListener('touchstart',e=>{
+// ── TOUCH / MOBILE CONTROLS ───────────────────────────────────────────────────
+// Joystick state
+const joy={active:false,id:-1,cx:0,cy:0,dx:0,dy:0,nx:0,ny:0};
+// Fire touch state
+const fireT={active:false,id:-1,autoFiring:false};
+// Missile touch state
+const missT={active:false,id:-1};
+
+// Visual joystick elements
+const joyBase=document.getElementById('joybase');
+const joyNub=document.getElementById('joynub');
+const fireBtn=document.getElementById('firebtn');
+const missBtn=document.getElementById('missbtn');
+
+const JOY_R=60; // max joystick radius
+
+function joyPos(touch){return{x:touch.clientX,y:touch.clientY};}
+
+function updateJoyVisual(){
+  if(!joyBase) return;
+  if(joy.active){
+    joyBase.style.opacity='0.85';
+    // Centre the base div on joy.cx/cy
+    joyBase.style.left=(joy.cx-60)+'px';
+    joyBase.style.top=(joy.cy-60)+'px';
+    joyBase.style.bottom='auto';
+    const nx=joy.dx*50, ny=joy.dy*50;
+    joyNub.style.transform=`translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
+  } else {
+    joyBase.style.opacity='0.3';
+    // Return to default bottom-left resting spot
+    joyBase.style.left='30px';
+    joyBase.style.top='auto';
+    joyBase.style.bottom='100px';
+    joyNub.style.transform='translate(-50%,-50%)';
+  }
+}
+
+canvas.addEventListener('touchstart',e=>{
   e.preventDefault();
-  const t=e.touches[0];tSX=t.clientX;tSY=t.clientY;
-  const now=Date.now();
-  if(now-lastTap<350)doBomb();lastTap=now;
-  if(gstate!=='playing'){
-    if(gstate==='title'){startGame();hideOv();gstate='levelstart';}
-    else if(gstate==='levelstart'){hideOv();gstate='playing';}
-    else if(gstate==='gameover'||gstate==='win'){startGame();hideOv();gstate='levelstart';}
+  for(const t of e.changedTouches){
+    const x=t.clientX, y=t.clientY;
+    // Overlay states — any tap advances
+    if(gstate!=='playing'){
+      if(gstate==='title'){startGame();hideOv();gstate='levelstart';}
+      else if(gstate==='levelstart'){hideOv();gstate='playing';}
+      else if(gstate==='gameover'||gstate==='win'){startGame();hideOv();gstate='levelstart';}
+      return;
+    }
+    // Right 35% of screen → fire zone
+    if(x>innerWidth*0.65){
+      // Check if missile button area (top of right zone)
+      if(y<innerHeight*0.45){
+        if(!missT.active){missT.active=true;missT.id=t.identifier;doBomb();}
+      } else {
+        if(!fireT.active){fireT.active=true;fireT.id=t.identifier;fireT.autoFiring=true;tryFire();}
+      }
+    } else {
+      // Left 65% → joystick
+      if(!joy.active){
+        joy.active=true;joy.id=t.identifier;
+        joy.cx=x;joy.cy=y;joy.dx=0;joy.dy=0;joy.nx=x;joy.ny=y;
+        updateJoyVisual();
+      }
+    }
   }
 },{passive:false});
-window.addEventListener('touchmove',e=>{
+
+canvas.addEventListener('touchmove',e=>{
   e.preventDefault();
-  const t=e.touches[0];
-  const ddx=(t.clientX-tSX)/innerWidth*2,ddy=(t.clientY-tSY)/innerHeight*2;
-  keys['ArrowRight']=ddx>.04;keys['ArrowLeft']=ddx<-.04;
-  keys['ArrowUp']=ddy<-.04;keys['ArrowDown']=ddy>.04;
+  for(const t of e.changedTouches){
+    if(t.identifier===joy.id){
+      const ddx=t.clientX-joy.cx, ddy=t.clientY-joy.cy;
+      const dist=Math.sqrt(ddx*ddx+ddy*ddy);
+      const clamped=Math.min(dist,JOY_R);
+      const angle=Math.atan2(ddy,ddx);
+      joy.dx=Math.cos(angle)*(clamped/JOY_R);
+      joy.dy=Math.sin(angle)*(clamped/JOY_R);
+      joy.nx=joy.cx+Math.cos(angle)*clamped;
+      joy.ny=joy.cy+Math.sin(angle)*clamped;
+      updateJoyVisual();
+    }
+  }
 },{passive:false});
-window.addEventListener('touchend',e=>{
-  keys['ArrowRight']=keys['ArrowLeft']=keys['ArrowUp']=keys['ArrowDown']=false;
-  if(gstate==='playing')tryFire();
+
+canvas.addEventListener('touchend',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier===joy.id){joy.active=false;joy.dx=0;joy.dy=0;updateJoyVisual();}
+    if(t.identifier===fireT.id){fireT.active=false;fireT.autoFiring=false;}
+    if(t.identifier===missT.id){missT.active=false;}
+  }
+},{passive:false});
+
+canvas.addEventListener('touchcancel',e=>{
+  e.preventDefault();
+  joy.active=false;joy.dx=0;joy.dy=0;
+  fireT.active=false;fireT.autoFiring=false;
+  missT.active=false;
+  updateJoyVisual();
 },{passive:false});
 
 // ── MAIN UPDATE ───────────────────────────────────────────────────────────────
@@ -969,7 +1100,7 @@ function update(){
 
   updatePlayer();
 
-  if(keys[' ']||mdown)tryFire();
+  if(keys[' ']||mdown||fireT.autoFiring)tryFire();
 
   // Spawn
   if(!bossActive){
@@ -1001,6 +1132,18 @@ function loop(){
 }
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
+// Detect touch device → show mobile UI
+const isTouchDevice=('ontouchstart' in window)||navigator.maxTouchPoints>0;
+if(isTouchDevice){
+  document.getElementById('joybase').style.display='block';
+  document.getElementById('firebtn').style.display='block';
+  document.getElementById('missbtn').style.display='block';
+  document.getElementById('mobilehint').style.display='block';
+  // Position joystick base at its default resting spot
+  const jb=document.getElementById('joybase');
+  jb.style.left='30px';
+  jb.style.bottom='100px';
+}
 makeStars();
 buildTerrain();
 makeShip();
