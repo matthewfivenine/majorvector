@@ -1020,15 +1020,16 @@ function updateJoyVisual(){
   }
 }
 
-// Overlay tap — document-level so z-index stacking never blocks it
+// Overlay tap — capture phase, straight to playing in one tap
 document.addEventListener('touchstart',e=>{
   const ov=document.getElementById('ov');
   if(!ov||ov.style.display==='none') return;
   e.preventDefault();
-  if(gstate==='title'){startGame();hideOv();gstate='levelstart';}
+  e.stopPropagation();
+  if(gstate==='title'){startGame();hideOv();gstate='playing';}
   else if(gstate==='levelstart'){hideOv();gstate='playing';}
-  else if(gstate==='gameover'||gstate==='win'){startGame();hideOv();gstate='levelstart';}
-},{passive:false});
+  else if(gstate==='gameover'||gstate==='win'){startGame();hideOv();gstate='playing';}
+},{passive:false,capture:true});
 
 canvas.addEventListener('touchstart',e=>{
   e.preventDefault();
