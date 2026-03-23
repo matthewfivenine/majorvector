@@ -37,8 +37,9 @@
     pointer-events:none;z-index:8;opacity:0.7;}
   #ov{position:fixed;inset:0;display:flex;flex-direction:column;
     align-items:center;justify-content:center;
-    background:rgba(0,0,0,0.92);z-index:20;
-    font-family:'Orbitron',monospace;text-align:center;color:#0ff;}
+    background:rgba(0,0,0,0.92);z-index:50;
+    font-family:'Orbitron',monospace;text-align:center;color:#0ff;
+    touch-action:manipulation;}
   #ov h1{font-size:clamp(28px,6vw,62px);font-weight:900;
     text-shadow:0 0 30px #0ff,0 0 70px #00f;letter-spacing:6px;
     margin-bottom:8px;animation:pulse 1.5s ease-in-out infinite;}
@@ -1019,17 +1020,22 @@ function updateJoyVisual(){
   }
 }
 
+// Overlay tap — document-level so z-index stacking never blocks it
+document.addEventListener('touchstart',e=>{
+  const ov=document.getElementById('ov');
+  if(!ov||ov.style.display==='none') return;
+  e.preventDefault();
+  if(gstate==='title'){startGame();hideOv();gstate='levelstart';}
+  else if(gstate==='levelstart'){hideOv();gstate='playing';}
+  else if(gstate==='gameover'||gstate==='win'){startGame();hideOv();gstate='levelstart';}
+},{passive:false});
+
 canvas.addEventListener('touchstart',e=>{
   e.preventDefault();
   for(const t of e.changedTouches){
     const x=t.clientX, y=t.clientY;
-    // Overlay states — any tap advances
-    if(gstate!=='playing'){
-      if(gstate==='title'){startGame();hideOv();gstate='levelstart';}
-      else if(gstate==='levelstart'){hideOv();gstate='playing';}
-      else if(gstate==='gameover'||gstate==='win'){startGame();hideOv();gstate='levelstart';}
-      return;
-    }
+    // Ignore if overlay is visible
+    if(gstate!=='playing') return;
     // Right 35% of screen → fire zone
     if(x>innerWidth*0.65){
       // Check if missile button area (top of right zone)
