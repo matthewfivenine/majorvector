@@ -60,18 +60,10 @@
     width:44px;height:44px;border-radius:50%;
     background:rgba(0,255,255,0.25);border:2px solid rgba(0,255,255,0.7);
     box-shadow:0 0 12px #0ff;pointer-events:none;}
-  #firebtn{position:fixed;bottom:80px;right:30px;width:90px;height:90px;
-    border-radius:50%;border:2px solid rgba(0,255,255,0.6);
-    background:rgba(0,255,255,0.12);display:none;z-index:30;
-    font-family:'Orbitron',monospace;font-size:11px;font-weight:700;
-    color:#0ff;text-align:center;line-height:90px;letter-spacing:1px;
-    box-shadow:0 0 16px rgba(0,255,255,0.3);-webkit-tap-highlight-color:transparent;}
-  #missbtn{position:fixed;bottom:195px;right:30px;width:68px;height:68px;
-    border-radius:50%;border:2px solid rgba(255,136,0,0.6);
-    background:rgba(255,136,0,0.12);display:none;z-index:30;
-    font-family:'Orbitron',monospace;font-size:9px;font-weight:700;
-    color:#f80;text-align:center;line-height:68px;letter-spacing:1px;
-    box-shadow:0 0 12px rgba(255,136,0,0.3);-webkit-tap-highlight-color:transparent;}
+  /* Fire zone indicator - right half */
+  #firezone{position:fixed;right:0;top:0;width:35%;height:100%;
+    pointer-events:none;z-index:5;display:none;
+    border-left:1px solid rgba(0,255,255,0.08);}
   #mobilehint{position:fixed;bottom:0;left:0;right:0;text-align:center;
     font-family:'Orbitron',monospace;font-size:9px;color:rgba(0,255,255,0.35);
     letter-spacing:2px;padding:6px;pointer-events:none;z-index:10;display:none;}
@@ -83,7 +75,7 @@
     #bossbar{width:240px;}
     #waveWrap{width:100px;}
     #bombs{font-size:9px;}
-    #joybase,#firebtn,#missbtn,#mobilehint{display:block;}
+    #joybase,#firezone,#mobilehint{display:block;}
     #xhair{display:none;}
   }
 </style>
@@ -91,11 +83,9 @@
 <body>
 <canvas id="c"></canvas>
 
-<!-- Mobile touch controls -->
+<!-- Mobile touch controls - joystick visual only, no HTML buttons -->
 <div id="joybase"><div id="joynub"></div></div>
-<div id="firebtn">FIRE</div>
-<div id="missbtn">BOMB</div>
-<div id="mobilehint">SWIPE LEFT: MOVE · TAP RIGHT: FIRE · TAP TOP-RIGHT: MISSILE</div>
+<div id="mobilehint">SWIPE LEFT: MOVE · HOLD RIGHT: FIRE · DOUBLE-TAP RIGHT: MISSILE</div>
 
 <div id="hud">
   <div class="hb"><div class="hl">SCORE</div><div class="hv" id="sv">000000</div></div>
@@ -180,7 +170,7 @@ const LEVELS=[
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let gstate='title';
 let score=0,lives=3,level=0,bombs=3,playerHp=100;
-let keys={},mdown=false,mx=0,my=0;
+let keys={},mdown=false,mx=innerWidth/2,my=innerHeight/2;
 let frame=0,shake=0,travelZ=0;
 let enemies=[],bullets=[],parts=[];
 let bossActive=false,boss=null,bossWarn=false,bwTimer=0;
@@ -387,7 +377,255 @@ function addWorldDressing(ld){
   bldGrp.add(grd);
 }
 
-// ── PLAYER SHIP ───────────────────────────────────────────────────────────────
+// ── OBSTACLES ────────────────────────────────────────────────────────────────
+let obstacles=[];        // {obj, type, z, hw, hh, speed, angle, hit}
+let obstacleTick=0;
+
+const OBS_TYPES=['ring','barrier','gate','blade','pinch'];
+
+function spawnObstacle(){
+  const ld=LEVELS[level];
+  const hex=ld.color;
+  const spawnZ=travelZ-NSEGS*SEG+4; // far end of visible tunnel
+  const wz=-NSEGS*SEG+4;            // local z relative to group
+  const {hw,hh}=profile(-wz,ld.bg);
+  const types=OBS_TYPES.slice(0,Math.min(2+Math.floor(level/2),OBS_TYPES.length));
+  const type=types[rndI(0,types.length-1)];
+  const g=new THREE.Group();
+
+  switch(type){
+    case 'ring':{
+      // Full ring with a gap — fly through the gap
+      const gapAngle=rnd(0,Math.PI*2);
+      const gapSize=rnd(.55,.9); // radians
+      const pts=[];
+      const segs=32;
+      for(let k=0;k<=segs;k++){
+        const a=gapAngle+gapSize/2+(k/segs)*(Math.PI*2-gapSize);
+        pts.push(V3(Math.cos(a)*hw*.85,Math.sin(a)*hh*.85,0));
+      }
+      g.add(gline(pts,hex,.9));
+      // Glow spars
+      for(let k=0;k<6;k++){
+        const a=gapAngle+gapSize/2+(k/5)*(Math.PI*2-gapSize);
+        g.add(gline([V3(0,0,0),V3(Math.cos(a)*hw*.85,Math.sin(a)*hh*.85,0)],hex,.3));
+      }
+      g.userData={gapAngle,gapSize,hw:hw*.85,hh:hh*.85};
+      obstacles.push({obj:g,type,wz,hw:hw*.85,hh:hh*.85,gapAngle,gapSize,spin:rnd(-.012,.012),hit:false});
+      break;
+    }
+    case 'barrier':{
+      // Horizontal or vertical slab with a hole
+      const horiz=Math.random()<.5;
+      const holeOff=rnd(-.4,.4); // hole centre offset (-1..1 of half-extent)
+      const holeW=rnd(.35,.55);  // hole width as fraction of total
+      const ext=horiz?hw*.9:hh*.9;
+      const holeL=(holeOff - holeW/2)*ext;
+      const holeR=(holeOff + holeW/2)*ext;
+      // Two line segments either side of the hole
+      if(horiz){
+        g.add(gline([V3(-ext,0,0),V3(holeL,0,0)],hex,.9));
+        g.add(gline([V3(holeR,0,0),V3(ext,0,0)],hex,.9));
+        // Depth struts
+        [-1,1].forEach(s=>{
+          g.add(gline([V3(s*ext,0,0),V3(s*ext,0,-1)],hex,.4));
+        });
+      } else {
+        g.add(gline([V3(0,-ext,0),V3(0,holeL,0)],hex,.9));
+        g.add(gline([V3(0,holeR,0),V3(0,ext,0)],hex,.9));
+        [-1,1].forEach(s=>{
+          g.add(gline([V3(0,s*ext,0),V3(0,s*ext,-1)],hex,.4));
+        });
+      }
+      obstacles.push({obj:g,type,wz,hw,hh,horiz,holeL,holeR,ext,spin:0,hit:false});
+      break;
+    }
+    case 'gate':{
+      // Two vertical panels that leave a central passage
+      const gateW=rnd(.3,.5)*hw; // half-width of passage
+      const panH=hh*.85;
+      [-1,1].forEach(side=>{
+        const panW=(hw-gateW)*.9;
+        const cx=side*(gateW+panW/2);
+        const pts=[
+          V3(cx-panW/2,-panH,0),V3(cx+panW/2,-panH,0),
+          V3(cx+panW/2, panH,0),V3(cx-panW/2, panH,0),
+          V3(cx-panW/2,-panH,0)
+        ];
+        g.add(gline(pts,hex,.85));
+        // Cross brace
+        g.add(gline([V3(cx-panW/2,-panH,0),V3(cx+panW/2,panH,0)],hex,.3));
+      });
+      obstacles.push({obj:g,type,wz,hw,hh,gateW,spin:0,hit:false});
+      break;
+    }
+    case 'blade':{
+      // Spinning cross/star that rotates — dodge by timing
+      const arms=rndI(2,4);
+      for(let k=0;k<arms;k++){
+        const a=k*Math.PI/arms;
+        const r=hw*.75;
+        g.add(gline([V3(Math.cos(a)*r,Math.sin(a)*r,0),V3(-Math.cos(a)*r,-Math.sin(a)*r,0)],hex,.9));
+        // Tip diamonds
+        [1,-1].forEach(s=>{
+          const tx=Math.cos(a)*r*s, ty=Math.sin(a)*r*s;
+          const na=a+Math.PI/2;
+          g.add(gline([
+            V3(tx+Math.cos(na)*.8,ty+Math.sin(na)*.8,0),
+            V3(tx,ty,-.8),
+            V3(tx-Math.cos(na)*.8,ty-Math.sin(na)*.8,0),
+            V3(tx,ty,.8),
+            V3(tx+Math.cos(na)*.8,ty+Math.sin(na)*.8,0),
+          ],hex,.6));
+        });
+      }
+      obstacles.push({obj:g,type,wz,hw,hh,arms,spinSpd:rnd(.025,.07)*(Math.random()<.5?1:-1),angle:rnd(0,Math.PI*2),hit:false});
+      break;
+    }
+    case 'pinch':{
+      // Tunnel narrows dramatically — wall spikes from all sides
+      const spikes=rndI(4,8);
+      for(let k=0;k<spikes;k++){
+        const a=(k/spikes)*Math.PI*2+rnd(0,.3);
+        const bx=Math.cos(a)*hw,by=Math.sin(a)*hh;
+        const tipX=Math.cos(a)*hw*.25,tipY=Math.sin(a)*hh*.25;
+        g.add(gline([V3(bx,by,0),V3(tipX,tipY,0)],hex,.85));
+        // Side fins on spike
+        const na=a+Math.PI/2;
+        g.add(gline([V3(bx+Math.cos(na)*.8,by+Math.sin(na)*.8,0),V3(tipX,tipY,0)],hex,.45));
+        g.add(gline([V3(bx-Math.cos(na)*.8,by-Math.sin(na)*.8,0),V3(tipX,tipY,0)],hex,.45));
+      }
+      obstacles.push({obj:g,type,wz,hw,hh,spikes,spin:0,hit:false});
+      break;
+    }
+  }
+
+  g.position.set(0,0,wz);
+  terrGrp.add(g);
+}
+
+function updateObstacles(){
+  // Spawn new obstacles periodically
+  obstacleTick++;
+  const interval=Math.max(60,120-level*8); // faster spawning each level
+  if(obstacleTick>=interval){
+    obstacleTick=0;
+    spawnObstacle();
+  }
+
+  const playerWorldZ=travelZ; // terrain group offset = travelZ
+  for(let i=obstacles.length-1;i>=0;i--){
+    const ob=obstacles[i];
+
+    // Spin blades and rings
+    if(ob.type==='blade'){
+      ob.angle+=ob.spinSpd;
+      ob.obj.rotation.z=ob.angle;
+    }
+    if(ob.type==='ring'&&ob.spin){
+      ob.obj.rotation.z=(ob.obj.rotation.z||0)+ob.spin;
+    }
+
+    // World-space Z of this obstacle
+    const worldZ=ob.wz+playerWorldZ;
+
+    // Remove if behind camera
+    if(worldZ>8){
+      terrGrp.remove(ob.obj);disposeG(ob.obj);
+      obstacles.splice(i,1);continue;
+    }
+
+    // Collision — only when obstacle is close to ship (z -2 to +3)
+    if(worldZ>-5&&worldZ<3&&invTimer<=0){
+      const collide=checkObstacleHit(ob,px,py,ob.obj.rotation.z||0);
+      if(collide){
+        hitPlayer(20);
+        // Flash the obstacle
+        ob.obj.traverse(o=>{if(o.material)o.material.color.setHex(0xffffff);});
+        setTimeout(()=>{
+          ob.obj.traverse(o=>{if(o.material)o.material.color.setHex(LEVELS[level].color);});
+        },120);
+      }
+    }
+  }
+}
+
+function checkObstacleHit(ob,px,py,rot){
+  // Ship radius for collision
+  const sr=1.4;
+  // Rotate player pos into obstacle local space
+  const cosR=Math.cos(-rot),sinR=Math.sin(-rot);
+  const lpx=px*cosR-py*sinR;
+  const lpy=px*sinR+py*cosR;
+
+  switch(ob.type){
+    case 'ring':{
+      // Hit if outside the gap
+      const dist=Math.sqrt((lpx/ob.hw)**2+(lpy/ob.hh)**2);
+      if(dist<0.7||dist>1.15) return false; // not near ring
+      // Angle of player relative to gap
+      const pAngle=Math.atan2(lpy,lpx);
+      const gapStart=ob.gapAngle-ob.gapSize/2;
+      const gapEnd=ob.gapAngle+ob.gapSize/2;
+      // Normalize angle into gap check
+      const norm=(a,s,e)=>{
+        let d=((a-s)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+        let span=((e-s)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+        return d<span;
+      };
+      const inGap=norm(pAngle,gapStart,gapEnd);
+      return !inGap;
+    }
+    case 'barrier':{
+      if(ob.horiz){
+        if(Math.abs(lpy)>sr) return false; // not at barrier height
+        if(lpx>ob.holeL&&lpx<ob.holeR) return false; // in hole
+        return Math.abs(lpx)<=ob.ext+sr;
+      } else {
+        if(Math.abs(lpx)>sr) return false;
+        if(lpy>ob.holeL&&lpy<ob.holeR) return false;
+        return Math.abs(lpy)<=ob.ext+sr;
+      }
+    }
+    case 'gate':{
+      if(Math.abs(lpy)>ob.hh+sr) return false;
+      return Math.abs(lpx)>ob.gateW-sr&&Math.abs(lpx)<ob.hw+sr;
+    }
+    case 'blade':{
+      // Hit if near any arm line
+      const arms=ob.arms;
+      for(let k=0;k<arms;k++){
+        const a=k*Math.PI/arms;
+        const ax=Math.cos(a)*ob.hw*.75,ay=Math.sin(a)*ob.hh*.75;
+        // Distance from player to line segment (-ax,-ay)→(ax,ay)
+        const d=pointToSegDist(lpx,lpy,-ax,-ay,ax,ay);
+        if(d<sr+0.5) return true;
+      }
+      return false;
+    }
+    case 'pinch':{
+      // Hit if close to any spike line
+      const spikes=ob.spikes;
+      for(let k=0;k<spikes;k++){
+        const a=(k/spikes)*Math.PI*2;
+        const bx=Math.cos(a)*ob.hw,by=Math.sin(a)*ob.hh;
+        const tipX=Math.cos(a)*ob.hw*.25,tipY=Math.sin(a)*ob.hh*.25;
+        const d=pointToSegDist(lpx,lpy,bx,by,tipX,tipY);
+        if(d<sr+0.4) return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+function pointToSegDist(px,py,ax,ay,bx,by){
+  const dx=bx-ax,dy=by-ay;
+  const lenSq=dx*dx+dy*dy;
+  if(lenSq===0) return Math.hypot(px-ax,py-ay);
+  const t=Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/lenSq));
+  return Math.hypot(px-(ax+t*dx),py-(ay+t*dy));
+}
 function makeShip(){
   if(shipGroup){scene.remove(shipGroup);disposeG(shipGroup);}
   shipGroup=new THREE.Group();
@@ -642,6 +880,7 @@ function startLevel(){
   enemies.forEach(e=>{scene.remove(e.obj);disposeG(e.obj)});enemies=[];
   bullets.forEach(b=>{scene.remove(b.obj);b.obj.geometry.dispose()});bullets=[];
   parts.forEach(p=>{scene.remove(p.obj);p.obj.geometry.dispose()});parts=[];
+  obstacles=[];obstacleTick=0;
   if(boss){scene.remove(boss.obj);disposeG(boss.obj);boss=null;}
   bossActive=false;bossWarn=false;bwTimer=0;
   $('bossbar').style.display='none';
@@ -983,36 +1222,25 @@ window.addEventListener('mouseup',()=>mdown=false);
 function tryFire(){if(fireCd<=0){fireBullet();fireCd=Math.max(5,12-level);}}
 
 // ── TOUCH / MOBILE CONTROLS ───────────────────────────────────────────────────
-// Joystick state
-const joy={active:false,id:-1,cx:0,cy:0,dx:0,dy:0,nx:0,ny:0};
-// Fire touch state
-const fireT={active:false,id:-1,autoFiring:false};
-// Missile touch state
-const missT={active:false,id:-1};
+// Two-zone system: left 60% = joystick, right 40% = fire (hold) + missile (double-tap)
+const joy={active:false,id:-1,cx:0,cy:0,dx:0,dy:0};
+let fireHeld=false;   // true while right-zone finger is down
+let lastRightTap=0;   // for double-tap missile detection
 
-// Visual joystick elements
 const joyBase=document.getElementById('joybase');
 const joyNub=document.getElementById('joynub');
-const fireBtn=document.getElementById('firebtn');
-const missBtn=document.getElementById('missbtn');
-
-const JOY_R=60; // max joystick radius
-
-function joyPos(touch){return{x:touch.clientX,y:touch.clientY};}
+const JOY_R=55;
 
 function updateJoyVisual(){
-  if(!joyBase) return;
+  if(!joyBase)return;
   if(joy.active){
     joyBase.style.opacity='0.85';
-    // Centre the base div on joy.cx/cy
     joyBase.style.left=(joy.cx-60)+'px';
     joyBase.style.top=(joy.cy-60)+'px';
     joyBase.style.bottom='auto';
-    const nx=joy.dx*50, ny=joy.dy*50;
-    joyNub.style.transform=`translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
+    joyNub.style.transform=`translate(calc(-50% + ${joy.dx*48}px), calc(-50% + ${joy.dy*48}px))`;
   } else {
     joyBase.style.opacity='0.3';
-    // Return to default bottom-left resting spot
     joyBase.style.left='30px';
     joyBase.style.top='auto';
     joyBase.style.bottom='100px';
@@ -1020,10 +1248,10 @@ function updateJoyVisual(){
   }
 }
 
-// Overlay tap — capture phase, straight to playing in one tap
+// Overlay tap — capture phase fires before canvas
 document.addEventListener('touchstart',e=>{
   const ov=document.getElementById('ov');
-  if(!ov||ov.style.display==='none') return;
+  if(!ov||ov.style.display==='none')return;
   e.preventDefault();
   e.stopPropagation();
   if(gstate==='title'){startGame();hideOv();gstate='playing';}
@@ -1033,25 +1261,23 @@ document.addEventListener('touchstart',e=>{
 
 canvas.addEventListener('touchstart',e=>{
   e.preventDefault();
+  if(gstate!=='playing')return;
   for(const t of e.changedTouches){
-    const x=t.clientX, y=t.clientY;
-    // Ignore if overlay is visible
-    if(gstate!=='playing') return;
-    // Right 35% of screen → fire zone
-    if(x>innerWidth*0.65){
-      // Check if missile button area (top of right zone)
-      if(y<innerHeight*0.45){
-        if(!missT.active){missT.active=true;missT.id=t.identifier;doBomb();}
-      } else {
-        if(!fireT.active){fireT.active=true;fireT.id=t.identifier;fireT.autoFiring=true;tryFire();}
-      }
-    } else {
-      // Left 65% → joystick
+    const x=t.clientX,y=t.clientY;
+    if(x<innerWidth*0.6){
+      // Left zone → joystick
       if(!joy.active){
         joy.active=true;joy.id=t.identifier;
-        joy.cx=x;joy.cy=y;joy.dx=0;joy.dy=0;joy.nx=x;joy.ny=y;
+        joy.cx=x;joy.cy=y;joy.dx=0;joy.dy=0;
         updateJoyVisual();
       }
+    } else {
+      // Right zone → fire + double-tap missile
+      fireHeld=true;
+      const now=Date.now();
+      if(now-lastRightTap<320){doBomb();lastRightTap=0;}
+      else{lastRightTap=now;}
+      tryFire();
     }
   }
 },{passive:false});
@@ -1060,14 +1286,12 @@ canvas.addEventListener('touchmove',e=>{
   e.preventDefault();
   for(const t of e.changedTouches){
     if(t.identifier===joy.id){
-      const ddx=t.clientX-joy.cx, ddy=t.clientY-joy.cy;
-      const dist=Math.sqrt(ddx*ddx+ddy*ddy);
-      const clamped=Math.min(dist,JOY_R);
-      const angle=Math.atan2(ddy,ddx);
-      joy.dx=Math.cos(angle)*(clamped/JOY_R);
-      joy.dy=Math.sin(angle)*(clamped/JOY_R);
-      joy.nx=joy.cx+Math.cos(angle)*clamped;
-      joy.ny=joy.cy+Math.sin(angle)*clamped;
+      const ddx=t.clientX-joy.cx,ddy=t.clientY-joy.cy;
+      const d=Math.sqrt(ddx*ddx+ddy*ddy);
+      const c=Math.min(d,JOY_R);
+      const a=Math.atan2(ddy,ddx);
+      joy.dx=Math.cos(a)*(c/JOY_R);
+      joy.dy=Math.sin(a)*(c/JOY_R);
       updateJoyVisual();
     }
   }
@@ -1076,17 +1300,20 @@ canvas.addEventListener('touchmove',e=>{
 canvas.addEventListener('touchend',e=>{
   e.preventDefault();
   for(const t of e.changedTouches){
-    if(t.identifier===joy.id){joy.active=false;joy.dx=0;joy.dy=0;updateJoyVisual();}
-    if(t.identifier===fireT.id){fireT.active=false;fireT.autoFiring=false;}
-    if(t.identifier===missT.id){missT.active=false;}
+    if(t.identifier===joy.id){
+      joy.active=false;joy.dx=0;joy.dy=0;
+      updateJoyVisual();
+    } else {
+      // Right zone finger lifted
+      fireHeld=false;
+    }
   }
 },{passive:false});
 
 canvas.addEventListener('touchcancel',e=>{
   e.preventDefault();
   joy.active=false;joy.dx=0;joy.dy=0;
-  fireT.active=false;fireT.autoFiring=false;
-  missT.active=false;
+  fireHeld=false;
   updateJoyVisual();
 },{passive:false});
 
@@ -1096,7 +1323,7 @@ function update(){
   frame++;fireCd--;bombCd--;
 
   // Scroll world
-  const spd=LEVELS[level].spd*.038;
+  const spd=LEVELS[level].spd*.12;
   travelZ+=spd;
   terrGrp.position.z=travelZ;
   bldGrp.position.z=travelZ;
@@ -1107,7 +1334,7 @@ function update(){
 
   updatePlayer();
 
-  if(keys[' ']||mdown||fireT.autoFiring)tryFire();
+  if(keys[' ']||mdown||fireHeld)tryFire();
 
   // Spawn
   if(!bossActive){
@@ -1125,6 +1352,7 @@ function update(){
 
   updateEnemies();
   if(bossActive&&boss)updateBoss();
+  updateObstacles();
   updateBullets();
   updateParts();
 
@@ -1143,13 +1371,7 @@ function loop(){
 const isTouchDevice=('ontouchstart' in window)||navigator.maxTouchPoints>0;
 if(isTouchDevice){
   document.getElementById('joybase').style.display='block';
-  document.getElementById('firebtn').style.display='block';
-  document.getElementById('missbtn').style.display='block';
   document.getElementById('mobilehint').style.display='block';
-  // Position joystick base at its default resting spot
-  const jb=document.getElementById('joybase');
-  jb.style.left='30px';
-  jb.style.bottom='100px';
 }
 makeStars();
 buildTerrain();
